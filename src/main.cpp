@@ -29,12 +29,13 @@ String deviceId = SECRET_DEVICE_ID;
 String devicePass = SECRET_DEVICE_PASSWORD;
 
 const char *ntpServer = "pool.ntp.org"; // Cluster of timeservers; Anyone can use to request the time.
-const long gmtOffset_sec = 3600 * 9;    // GMT offset; seoul: +09:00
+const long gmtOffset_sec = 3600 * 9;    // GMT offset; seoul: +09:00 == 3600*9
 const int daylightOffset_sec = 0;       // Summertime; Not Used.
 
-WiFiClient wifiClient;               // Used for the TCP socket connection
-BearSSLClient sslClient(wifiClient); // Used for SSL/TLS connection, Integrates with ECC508
-MqttClient mqttClient(sslClient);
+WiFiClient wifiClient; // Used for the TCP socket connection
+// BearSSLClient sslClient(wifiClient); // Used for SSL/TLS connection, Integrates with ECC508
+// MqttClient mqttClient(sslClient);
+MqttClient mqttClient(wifiClient);
 
 // Set your Board ID (ESP32 Sender #1 = BOARD_ID 1, ESP32 Sender #2 = BOARD_ID 2, etc)
 #define BOARD_ID 1
@@ -67,6 +68,8 @@ void publishMessage();
 void publishTemperatureHumidity();
 void onMessageReceived(int messageSize);
 
+unsigned long getTime();
+
 void setup()
 {
   Serial.begin(115200); // Init Serial Monitor
@@ -75,54 +78,75 @@ void setup()
   // Init and get the time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   printLocalTime();
+  /*
+  configTime(0, 0, ntpServer);
 
-  if (!ECCX08.begin())
-  {
-    Serial.println("No ECCX08 present!");
-    while (1)
-      ;
-  }
+    if (!ECCX08.begin())
+    {
+      Serial.println("No ECCX08 present!");
+      while (1)
+        ;
+    }
 
-  // Reconstruct the self signed cert
-  ECCX08SelfSignedCert.beginReconstruction(0, 8);
-  ECCX08SelfSignedCert.setCommonName(ECCX08.serialNumber());
-  ECCX08SelfSignedCert.endReconstruction();
+    // Reconstruct the self signed cert; 자체 서명된 인증서 재구성
+    ECCX08SelfSignedCert.beginReconstruction(0, 8);
+    ECCX08SelfSignedCert.setCommonName(ECCX08.serialNumber());
+    ECCX08SelfSignedCert.endReconstruction();
 
-  // Set a callback to get the current time
-  //  Used to validate the servers certificate
-  ArduinoBearSSL.onGetTime();
+    // Set a callback to get the current time; 현재 시간 가져오는 콜백
+    // Used to validate the servers certificate; 서버 인증서의 유효성 검사하는데 사용
+    ArduinoBearSSL.onGetTime(getTime); // 함수 포인터를 인자로 받네
+
+    // Set the ECCX08 slot to use for the private key; 개인 키(비밀 키)에 사용할 ECCX08 슬롯 설정
+    // and the accompanying public certificate for it; 그리고 그걸 위해 첨부된 공인 인증서
+    sslClient.setEccSlot(0, ECCX08SelfSignedCert.bytes(), ECCX08SelfSignedCert.length());
+  */
+  // Set the username to "<broker>/<device id>/api-version=2018-06-30"
+  // with Shared Access Signature (SAS) as Device Password
+  String username;
+
+  username += broker;
+  username += "/";
+  username += deviceId;
+  username += "/api-version=2024-02-02";
+
+  Serial.print("Username: ");
+  Serial.println(username);
+  Serial.print("Device PW: ");
+  Serial.println(devicePass);
+
+  mqttClient.setUsernamePassword(username, devicePass);
+
+  // Set the 'message callback', this function is
+  // called when the MQTTClient receives a message
+  // MQTT 클라이언트가 메시지를 받았을 때 실행할 콜백함수 설정
+  mqttClient.onMessage(onMessageReceived);
 }
 
 void loop()
 {
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= interval)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    // 가장 최신 판독값을 저장
-    previousMillis = currentMillis;
-    // Set values to send
-    myData.id = BOARD_ID;
-    myData.temp = readDHTTemperature();
-    myData.hum = readDHTHumidity();
-    myData.messageId = messageId++;
+    initWiFi();
+  }
+  if (!mqttClient.connected())
+  {
+    initMQTT();
+  }
 
-    //
+  // poll for new MQTT Messages and Send keep alives
+  // 연결을 활성 상태로 유지하며 loop() 안에서 사용됩니다.
+  mqttClient.poll();
 
-    // [Send message] via ESP-NOW
-    // esp_now_send() : ESP-NOW 통해 데이터 송신
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
+  unsigned long currentMillis = millis();
+  previousMillis = currentMillis;
 
-    //
-
-    if (result == ESP_OK)
-    {
-      Serial.println("Sent with success");
-    }
-    else
-    {
-      Serial.println("Error sending the data");
-      Serial.println(result);
-    }
+  // Publish a Message Roughly Every 5 seconds; 5초마다 메시지 발행
+  if (currentMillis - previousMillis > interval)
+  {
+    currentMillis = millis();
+    // publishMessage();
+    publishTemperatureHumidity();
   }
 }
 
@@ -182,9 +206,11 @@ void initWiFi()
       Serial.print(".");
     }
   }
-  Serial.print("Connected IP : ");
+  Serial.print("Connected to: ");
+  Serial.println(ssid);
+  Serial.print("Connected IP: ");
   Serial.print(WiFi.localIP());
-  Serial.println("(Station Mode)");
+  Serial.println(" (Station Mode)");
 }
 
 void printLocalTime()
@@ -196,15 +222,6 @@ void printLocalTime()
     return;
   }
   Serial.println(&timeinfo, "%Y %b %d %a, %H:%M:%S");
-
-  Serial.println("Time variables");
-  char timeHour[3];
-  strftime(timeHour, 3, "%H", &timeinfo);
-  Serial.println(timeHour);
-  char timeWeekDay[10];
-  strftime(timeWeekDay, 10, "%A", &timeinfo);
-  Serial.println(timeWeekDay);
-  Serial.println();
 }
 
 void initMQTT()
@@ -234,6 +251,7 @@ void initMQTT()
   mqttClient.subscribe("devices/" + deviceId + "/messages/devicebound/#");
 }
 
+// Publishing test
 void publishMessage()
 {
   Serial.println("Publishing Message");
@@ -254,8 +272,9 @@ void publishTemperatureHumidity()
   float humidity = readDHTHumidity();
 
   Serial.print(temperature);
-  Serial.print(" :Temprature <=> Humidity: ");
-  Serial.println(humidity);
+  Serial.print("℃ :Temprature <=> Humidity: ");
+  Serial.print(humidity);
+  Serial.println("%");
 
   // 오 json 사용?
   DynamicJsonDocument doc(1024);
@@ -292,4 +311,20 @@ void onMessageReceived(int messageSize)
   }
   Serial.println();
   Serial.println();
+}
+
+// ESP32로 Epoch/Unix 시간을 얻으려면 getTime() 함수 필요 -> 서버 유효성 인증에 사용됨
+// 다른 wifi 라이브러리의 WiFi.getTime() 대체
+// Function that gets current epoch time
+unsigned long getTime()
+{
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    // Serial.println("Failed to obtain time");
+    return (0);
+  }
+  time(&now);
+  return now;
 }
