@@ -10,6 +10,9 @@ using namespace std;
 // Fill in the hostname of your Azure IoT Hub broker
 #define SECRET_BROKER "daonHubGroup.azure-devices.net"
 
+#define SECRET_PRIMARY_KEY "n7P/BxFrLnOXsieojHAivfv2FKsgnREwPAIoTOjYgyw="
+#define SECRET_CONNECTION_STRING "HostName=daonHubGroup.azure-devices.net;DeviceId=esp32_Seonsor_temp;SharedAccessKey=n7P/BxFrLnOXsieojHAivfv2FKsgnREwPAIoTOjYgyw="
+
 // Fill in the device id
 #define SECRET_DEVICE_ID "esp32_Seonsor_temp"
 

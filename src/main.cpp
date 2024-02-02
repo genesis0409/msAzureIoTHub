@@ -12,7 +12,10 @@
 #include "time.h"
 
 #include <WiFi.h>
-#include <ArduinoMqttClient.h>
+
+// #include <ArduinoMqttClient.h>
+#include <EspMQTTClient.h>
+
 #include <ArduinoJson.h>
 
 #include <ArduinoBearSSL.h>               // 필요한가?
@@ -22,20 +25,24 @@
 #include "arduino_secrets.h"
 
 ////////// Enter your sensitive data in arduino_secrets.h
-const char ssid[] = SECRET_WIFI_SSID;
-const char pass[] = SECRET_WIFI_PASS;
-const char broker[] = SECRET_BROKER;
-String deviceId = SECRET_DEVICE_ID;
-String devicePass = SECRET_DEVICE_PASSWORD;
+const char *ssid = SECRET_WIFI_SSID;
+const char *pass = SECRET_WIFI_PASS;
+const char *broker = SECRET_BROKER;
+const short mqttServerPort = 1883;
+const char *deviceId = SECRET_DEVICE_ID;
+const char *devicePass = SECRET_DEVICE_PASSWORD;
+
+const char *devicePriKey = SECRET_PRIMARY_KEY;
+const char *connectionString = SECRET_CONNECTION_STRING;
 
 const char *ntpServer = "pool.ntp.org"; // Cluster of timeservers; Anyone can use to request the time.
 const long gmtOffset_sec = 3600 * 9;    // GMT offset; seoul: +09:00 == 3600*9
 const int daylightOffset_sec = 0;       // Summertime; Not Used.
 
-WiFiClient wifiClient; // Used for the TCP socket connection
-// BearSSLClient sslClient(wifiClient); // Used for SSL/TLS connection, Integrates with ECC508
-// MqttClient mqttClient(sslClient);
-MqttClient mqttClient(wifiClient);
+// WiFiClient wifiClient; // Used for the TCP socket connection
+// // BearSSLClient sslClient(wifiClient); // Used for SSL/TLS connection, Integrates with ECC508
+// // MqttClient mqttClient(sslClient);
+// MqttClient mqttClient(wifiClient);
 
 // Set your Board ID (ESP32 Sender #1 = BOARD_ID 1, ESP32 Sender #2 = BOARD_ID 2, etc)
 #define BOARD_ID 1
@@ -115,12 +122,46 @@ void setup()
   Serial.print("Device PW: ");
   Serial.println(devicePass);
 
-  mqttClient.setUsernamePassword(username, devicePass);
+  // mqttClient.setUsernamePassword(username, devicePass);
+
+  /// Only MQTT handling (no wifi), with MQTT authentification
+  EspMQTTClient client(
+      broker,
+      mqttServerPort,
+      username.c_str(),
+      devicePass);
 
   // Set the 'message callback', this function is
   // called when the MQTTClient receives a message
   // MQTT 클라이언트가 메시지를 받았을 때 실행할 콜백함수 설정
-  mqttClient.onMessage(onMessageReceived);
+  // mqttClient.onMessage(onMessageReceived);
+
+  // mqtt (or wifi) 연결 수립 시 setter function callback
+  void onConnectionEstablished()
+  {
+    // Subscribe to "mytopic/test" and display received message to Serial
+    client.subscribe("mytopic/test", [](const String &payload)
+                     { Serial.println(payload); });
+
+    // Subscribe to "mytopic/wildcardtest/#" and display received message to Serial
+    client.subscribe("mytopic/wildcardtest/#", [](const String &topic, const String &payload)
+                     { Serial.println("(From wildcard) topic: " + topic + ", payload: " + payload); });
+
+    // Publish a message to "mytopic/test"
+    client.publish("mytopic/test", "This is a message"); // You can activate the retain flag by setting the third parameter to true
+
+    // Execute delayed instructions
+    client.executeDelayed(5 * 1000, []()
+                          { client.publish("mytopic/wildcardtest/test123", "This is a message sent 5 seconds later"); });
+  }
+
+  // 특정 topic 구독
+  void onTestMessageReceived(const String &message)
+  {
+    Serial.print("message received from test/mytopic: " + message);
+  }
+
+  client.subscribe("test/mytopic", onTestMessageReceived);
 }
 
 void loop()
