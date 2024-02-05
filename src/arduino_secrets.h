@@ -16,5 +16,8 @@ using namespace std;
 // Fill in the device id
 #define SECRET_DEVICE_ID "esp32_Seonsor_temp"
 
+// Username
+#define SECRET_USERNAME "daonHubGroup.azure-devices.net/esp32_Seonsor_temp/api-version=2024-02-01"
+
 // Fill in the device password: SAS token; 10000hours... === 416days
 #define SECRET_DEVICE_PASSWORD "SharedAccessSignature sr = daonHubGroup.azure - devices.net % 2Fdevices % 2Fesp32_Seonsor_temp &sig = io2otXaQAlujBnytNDjHdgih0TlIsjeRBWEfztE3Lok % 3D &se = 1742683722"
