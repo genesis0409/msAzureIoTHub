@@ -12,8 +12,6 @@
 
 #include <EspMQTTClient.h>
 
-#include "arduino_secrets.h"
-
 ////////// Enter your sensitive data in arduino_secrets.h
 const char *ssid = SECRET_WIFI_SSID;
 const char *pass = SECRET_WIFI_PASS;
@@ -236,7 +234,7 @@ void publishTemperatureHumidity()
   doc["temperature"] = t;
   doc["humidity"] = h;
 
-  string telemetry;
+  std::string telemetry;
   serializeJson(doc, telemetry);
   Serial.println(telemetry.c_str());
 

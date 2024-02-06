@@ -4,4 +4,4 @@
 .vscode/launch.json
 .vscode/ipch
 src/arduino_secrets.h
-include/iot_configs.h
+src/iot_configs.h

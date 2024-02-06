@@ -43,6 +43,13 @@
 #include "SerialLogger.h"
 #include "iot_configs.h"
 
+// Sensors
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+
+// Data format
+#include <ArduinoJson.h>
+
 // When developing for your own Arduino-based platform,
 // please follow the format '(ard;<platform>)'.
 #define AZURE_SDK_CLIENT_USER_AGENT "c%2F" AZ_SDK_VERSION_STRING "(ard;esp32)"
@@ -55,8 +62,8 @@
 #define SAS_TOKEN_DURATION_IN_MINUTES 60
 #define UNIX_TIME_NOV_13_2017 1510592825
 
-#define PST_TIME_ZONE -8
-#define PST_TIME_ZONE_DAYLIGHT_SAVINGS_DIFF 1
+#define PST_TIME_ZONE 9
+#define PST_TIME_ZONE_DAYLIGHT_SAVINGS_DIFF 0
 
 #define GMT_OFFSET_SECS (PST_TIME_ZONE * 3600)
 #define GMT_OFFSET_SECS_DST ((PST_TIME_ZONE + PST_TIME_ZONE_DAYLIGHT_SAVINGS_DIFF) * 3600)
@@ -78,14 +85,17 @@ static char mqtt_username[128];
 static char mqtt_password[200];
 static uint8_t sas_signature_buffer[256];
 static unsigned long next_telemetry_send_time_ms = 0;
+
+// Topic 설정
 static char telemetry_topic[128];
+
 static uint32_t telemetry_send_count = 0;
 static String telemetry_payload = "{}";
 
 #define INCOMING_DATA_BUFFER_SIZE 128
 static char incoming_data[INCOMING_DATA_BUFFER_SIZE];
 
-// Auxiliary functions
+// Auxiliary functions; 보조 함수
 #ifndef IOT_CONFIG_USE_X509_CERT
 static AzIoTSasToken sasToken(
     &client,
@@ -93,6 +103,37 @@ static AzIoTSasToken sasToken(
     AZ_SPAN_FROM_BUFFER(sas_signature_buffer),
     AZ_SPAN_FROM_BUFFER(mqtt_password));
 #endif // IOT_CONFIG_USE_X509_CERT
+
+static void connectToWiFi();                                            // WiFi 연결, loop()에서 핸들링
+static void initializeTime();                                           // getTime() 인증서 유효성 검사용 - print하는 함수 추가: printLocalTime()
+void receivedCallback(char *topic, byte *payload, unsigned int length); // 메시지 수신 콜백
+static esp_err_t mqtt_event_handler(esp_mqtt_event_handle_t event);     // MQTT 이벤트 핸들러
+static void initializeIoTHubClient();                                   // IoT Hub Client 초기화
+static int initializeMqttClient();                                      // MQTT Client 초기화, SAS 토큰 사용하네
+static uint32_t getEpochTimeInSecs();
+static void establishConnection();      // 각종 연결 수립(WiFi, time, iothub, mqtt)
+static void generateTelemetryPayload(); // payload 생성; telemetry_payload
+static void sendTelemetry();            // publish Message; telemetry_topic
+
+// DHT Sensor config
+// Set your Board ID (ESP32 Sender #1 = BOARD_ID 1, ESP32 Sender #2 = BOARD_ID 2, etc)
+#define BOARD_ID 0
+
+// Digital pin connected to the DHT sensor
+#define DHTPIN 4
+
+// Uncomment the type of sensor in use:
+// #define DHTTYPE    DHT11     // DHT 11
+#define DHTTYPE DHT22 // DHT 22 (AM2302)
+// #define DHTTYPE    DHT21     // DHT 21 (AM2301)
+
+static DHT dht(DHTPIN, DHTTYPE);
+static JsonDocument doc; // Allocate the JSON document
+static void printLocalTime();
+
+static float readDHTTemperature();
+static float readDHTHumidity();
+static void publishTemperatureHumidity();
 
 static void connectToWiFi()
 {
@@ -138,6 +179,7 @@ void receivedCallback(char *topic, byte *payload, unsigned int length)
   {
     Serial.print((char)payload[i]);
   }
+  Logger.Info(String(length) + " Bytes");
   Serial.println("");
 }
 
@@ -303,6 +345,9 @@ static void establishConnection()
 {
   connectToWiFi();
   initializeTime();
+
+  printLocalTime();
+
   initializeIoTHubClient();
   (void)initializeMqttClient();
 }
@@ -313,7 +358,25 @@ static void generateTelemetryPayload()
   // This sample shows how to generate the payload using a syntax closer to regular delevelopment for Arduino, with
   // String type instead of az_span as it might be done in other samples. Using az_span has the advantage of reusing the
   // same char buffer instead of dynamically allocating memory each time, as it is done by using the String type below.
-  telemetry_payload = "{ \"msgCount\": " + String(telemetry_send_count++) + " }";
+  // 원하는 lib를 사용하여 JSON을 생성할 수 있습니다.여기서는 단순화를 위해 수동으로 수행하는 방법을 보여줍니다.
+  // 이 샘플은 다른 샘플에서 할 수 있는 것처럼 az_span 대신 String type을 사용하여 Arduino에 대한 일반 디벨롭먼트에
+  // 가까운 구문을 사용하여 페이로드를 생성하는 방법을 보여줍니다. az_span을 사용하면 아래 String 유형을 사용하여
+  // 수행되는 것처럼 매번 동적으로 메모리를 할당하는 대신 동일한 char 버퍼를 재사용할 수 있는 장점이 있습니다.
+  // telemetry_payload = "{ \"msgCount\": " + String(telemetry_send_count++) + " }";
+
+  // Read Seonsor Data
+  float t = readDHTTemperature();
+  float h = readDHTHumidity();
+
+  Serial.printf("Temp: %.1f℃\n", t);
+  Serial.printf("Humi: %.1f%%\n", h);
+
+  doc["msgCount"] = telemetry_send_count++;
+  doc["boardId"] = BOARD_ID;
+  doc["temperature"] = t;
+  doc["humidity"] = h;
+
+  serializeJsonPretty(doc, telemetry_payload);
 }
 
 static void sendTelemetry()
@@ -323,6 +386,9 @@ static void sendTelemetry()
   // The topic could be obtained just once during setup,
   // however if properties are used the topic need to be generated again to reflect the
   // current values of the properties.
+  // setup()동안 한 번만 주제를 얻을 수 있었습니다,
+  // 그러나 properties을 사용하는 경우 속성의 현재 값을 반영하기 위해 항목을 다시 생성해야 합니다.
+  // az_iot_hub_client_telemetry_get_publish_topic() 함수로 미리 정해진 topic을 가져오네
   if (az_result_failed(az_iot_hub_client_telemetry_get_publish_topic(
           &client, NULL, telemetry_topic, sizeof(telemetry_topic), NULL)))
   {
@@ -330,8 +396,12 @@ static void sendTelemetry()
     return;
   }
 
+  // 이스케이프 문 사용 " 출력을 위한 \"
+  // "{ \"msgCount\": " + String(telemetry_send_count++) + " }";
+  // { "msgCount": 1557}
   generateTelemetryPayload();
 
+  // Publish 부분, QoS설정 가능, topic 수정은 어떻게 하지?
   if (esp_mqtt_client_publish(
           mqtt_client,
           telemetry_topic,
@@ -344,13 +414,22 @@ static void sendTelemetry()
   }
   else
   {
+    Logger.Info("Publish Topic: " + String(telemetry_topic));
     Logger.Info("Message published successfully");
   }
 }
 
 // Arduino setup and loop main functions.
 
-void setup() { establishConnection(); }
+void setup()
+{
+  establishConnection();
+
+  Serial.begin(115200); // Init Serial Monitor
+  dht.begin();          // Init dht Sensor
+
+  // 추가
+}
 
 void loop()
 {
@@ -366,9 +445,95 @@ void loop()
     initializeMqttClient();
   }
 #endif
+  // 일정 시간마다 보냄
   else if (millis() > next_telemetry_send_time_ms)
   {
     sendTelemetry();
     next_telemetry_send_time_ms = millis() + TELEMETRY_FREQUENCY_MILLISECS;
   }
+
+  // 구현 내용 추가
+  // telemetry_topic = "device";
+}
+
+// 함수 추가 영역
+
+// 시간 출력 함수
+static void printLocalTime()
+{
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    Logger.Info("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%Y %b %d %a, %H:%M:%S");
+}
+
+// 온도센서
+static float readDHTTemperature()
+{
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  // Read temperature as Celsius (the default)
+  float t = dht.readTemperature();
+  // Read temperature as Fahrenheit (isFahrenheit = true)
+  // float t = dht.readTemperature(true);
+  // Check if any reads failed and exit early (to try again).
+  if (isnan(t))
+  {
+    Logger.Info("Failed to read from DHT sensor!");
+    return 0;
+  }
+  else
+  {
+    // Serial.println(t);
+    return t;
+  }
+}
+
+// 습도센서
+static float readDHTHumidity()
+{
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  float h = dht.readHumidity();
+  if (isnan(h))
+  {
+    Logger.Info("Failed to read from DHT sensor!");
+    return 0;
+  }
+  else
+  {
+    // Serial.println(h);
+    return h;
+  }
+}
+
+static void publishTemperatureHumidity()
+{
+  // Serial.println("Publishing temp/humi Message");
+
+  // // Read Seonsor Data
+  // float t = readDHTTemperature();
+  // float h = readDHTHumidity();
+
+  // Serial.printf("Temp: %.1f℃", t);
+  // Serial.printf("Humi: %.1f%%", h);
+
+  // // Add values in the JSON document
+  // doc["messageId"] = messageId++;
+  // doc["deviceId"] = String(deviceId);
+  // doc["temperature"] = t;
+  // doc["humidity"] = h;
+
+  // std::string telemetry;
+  // serializeJson(doc, telemetry);
+  // Serial.println(telemetry.c_str());
+
+  // // publish Message
+  // client.publish("devices/" + String(deviceId) + "/messages/events/", telemetry.c_str());
+  // Serial.println("Message Published.");
+
+  // // test
+  // // serializeJsonPretty(doc, telemetry);
+  // // Serial.println(telemetry.c_str());
 }
