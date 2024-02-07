@@ -306,7 +306,7 @@ static int initializeMqttClient()
   mqtt_config.password = (const char *)az_span_ptr(sasToken.Get());
 #endif
 
-  mqtt_config.keepalive = 30;
+  mqtt_config.keepalive = 240;
   mqtt_config.disable_clean_session = 0;
   mqtt_config.disable_auto_reconnect = false;
   mqtt_config.event_handle = mqtt_event_handler;
@@ -371,8 +371,8 @@ static void generateTelemetryPayload()
   Serial.printf("Temp: %.1f℃\n", t);
   Serial.printf("Humi: %.1f%%\n", h);
 
-  doc["msgCount"] = telemetry_send_count++;
   doc["boardId"] = BOARD_ID;
+  doc["msgCount"] = telemetry_send_count++;
   doc["temperature"] = t;
   doc["humidity"] = h;
 
