@@ -371,7 +371,7 @@ static void generateTelemetryPayload()
   Serial.printf("Temp: %.1f℃\n", t);
   Serial.printf("Humi: %.1f%%\n", h);
 
-  doc["boardId"] = BOARD_ID;
+  doc["id"] = BOARD_ID;
   doc["msgCount"] = telemetry_send_count++;
   doc["temperature"] = t;
   doc["humidity"] = h;
