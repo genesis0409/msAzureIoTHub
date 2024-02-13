@@ -384,10 +384,10 @@ static void generateTelemetryPayload()
   Serial.println(&timeinfo, "%Y %b %d %a, %H:%M:%S");
 
   doc["id"] = BOARD_ID;
+  doc["currentTime"] = tsbuf;
   doc["msgCount"] = telemetry_send_count++;
   doc["temperature"] = t;
   doc["humidity"] = h;
-  doc["currentTime"] = tsbuf;
 
   serializeJsonPretty(doc, telemetry_payload);
 }
