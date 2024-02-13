@@ -370,18 +370,23 @@ static void generateTelemetryPayload()
 
   // Read Time Data
   struct tm timeinfo;
+  char tsbuf[30];
   if (!getLocalTime(&timeinfo))
   {
     Logger.Info("Failed to obtain time");
-    return;
+    strcpy(tsbuf, "Failed to obtain time");
   }
-  char tsbuf[30];
-  strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%d %H:%M:%S (%a)", &timeinfo);
+  else
+  {
+    strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%d %H:%M:%S (%a)", &timeinfo);
+  }
 
-  // serial print
-  Serial.printf("Temp: %.1f℃\n", t);
-  Serial.printf("Humi: %.1f%%\n", h);
-  Serial.println(&timeinfo, "%Y %b %d %a, %H:%M:%S");
+  /*
+    // serial print
+    Serial.printf("Temp: %.1f℃\n", t);
+    Serial.printf("Humi: %.1f%%\n", h);
+    Serial.println(&timeinfo, "%Y %b %d %a, %H:%M:%S");
+  */
 
   doc["id"] = BOARD_ID;
   doc["currentTime"] = tsbuf;
