@@ -8,10 +8,11 @@
 
 static void writeTime()
 {
-  struct tm* ptm;
+  struct tm *ptm;
   time_t now = time(NULL);
 
-  ptm = gmtime(&now);
+  // ptm = gmtime(&now);
+  ptm = localtime(&now);
 
   Serial.print(ptm->tm_year + UNIX_EPOCH_START_YEAR);
   Serial.print("/");
